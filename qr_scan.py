@@ -9,7 +9,7 @@ class QRCodeScannerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("すごいぞコードのQちゃん！")
-        self.root.geometry("700x600")  # ウィンドウサイズを調整
+        self.root.geometry("700x600")
 
         # 上部ボタンエリアのフレーム
         button_frame = tk.Frame(root)
@@ -67,8 +67,8 @@ class QRCodeScannerApp:
         # ビデオキャプチャのセットアップ
         self.cap = cv2.VideoCapture(0)
         self.detector = cv2.QRCodeDetector()
-        self.show_qr_code = False  # QRコード表示モードのフラグ
-        self.qr_image = None  # 生成したQRコードの画像を保持
+        self.show_qr_code = False
+        self.qr_image = None
         self.update_frame()
 
     def update_frame(self):
