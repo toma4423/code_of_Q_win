@@ -3,6 +3,7 @@ from tkinter import messagebox, filedialog
 import cv2
 from PIL import Image, ImageTk
 import qrcode
+import os
 
 
 class QRCodeScannerApp:
@@ -65,7 +66,15 @@ class QRCodeScannerApp:
         self.canvas.pack(pady=20)
 
         # ビデオキャプチャのセットアップ
-        self.cap = cv2.VideoCapture(0)
+        try:
+            self.cap = cv2.VideoCapture(0)
+            if not self.cap.isOpened():
+                raise ValueError("カメラを開けませんでした")
+        except Exception as e:
+            messagebox.showerror("エラー", f"カメラの初期化に失敗しました: {str(e)}")
+            self.root.destroy()
+            return
+
         self.detector = cv2.QRCodeDetector()
         self.show_qr_code = False  # QRコード表示モードのフラグ
         self.qr_image = None  # 生成したQRコードの画像を保持
@@ -73,31 +82,46 @@ class QRCodeScannerApp:
 
     def update_frame(self):
         if not self.show_qr_code:
-            # カメラからフレームを取得
-            ret, frame = self.cap.read()
-            if ret:
-                # OpenCVの画像をPIL画像に変換して表示
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img = Image.fromarray(frame)
-                imgtk = ImageTk.PhotoImage(image=img)
-                self.canvas.create_image(0, 0, anchor="nw", image=imgtk)
-                self.canvas.imgtk = imgtk
+            try:
+                # カメラからフレームを取得
+                ret, frame = self.cap.read()
+                if ret:
+                    # フレームを反転して自然な向きに
+                    frame = cv2.flip(frame, 1)
 
-                # 自動スキャン処理
-                data, vertices, _ = self.detector.detectAndDecode(frame)
-                if data:
-                    self.result_text.delete("1.0", tk.END)
-                    self.result_text.insert(tk.END, data)
-        # 30ms後に再度update_frameを呼び出し（ループの継続）
+                    # OpenCVの画像をPIL画像に変換して表示
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    img = Image.fromarray(frame_rgb)
+
+                    # キャンバスサイズに合わせてリサイズ
+                    img = img.resize((400, 400), Image.LANCZOS)
+                    imgtk = ImageTk.PhotoImage(image=img)
+
+                    # キャンバスをクリアしてから新しい画像を表示
+                    self.canvas.delete("all")
+                    self.canvas.create_image(0, 0, anchor="nw", image=imgtk)
+                    self.canvas.imgtk = imgtk
+
+                    try:
+                        # QRコード検出処理
+                        data, vertices, _ = self.detector.detectAndDecode(frame)
+                        if data:
+                            self.result_text.delete("1.0", tk.END)
+                            self.result_text.insert(tk.END, data)
+                    except cv2.error:
+                        # QRコード検出エラーは無視して続行
+                        pass
+            except Exception as e:
+                print(f"カメラフレームの処理中にエラーが発生: {str(e)}")
+
+        # 30ms後に再度update_frameを呼び出し
         self.root.after(30, self.update_frame)
 
     def generate_qr_code(self):
-        # テキストフィールドの内容からQRコードを生成
+        # 入力値の検証を強化
         text = self.result_text.get("1.0", tk.END).strip()
-        if not text:
-            messagebox.showwarning(
-                "入力エラー", "テキストフィールドに文字を入力してください"
-            )
+        if not self.validate_input(text):
+            messagebox.showwarning("セキュリティ警告", "不正な入力が検出されました")
             return
 
         # テキストが多すぎる場合のチェック
@@ -132,15 +156,37 @@ class QRCodeScannerApp:
         self.return_to_camera_button.grid()
         self.save_button.grid()
 
+    def validate_input(self, text):
+        # 危険な文字列やパターンをチェック
+        import re
+
+        # 例: スクリプトタグ、制御文字などをブロック
+        dangerous_patterns = [
+            r"<script.*?>.*?</script>",
+            r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]",
+        ]
+        return not any(
+            re.search(pattern, text, re.IGNORECASE) for pattern in dangerous_patterns
+        )
+
     def save_qr_code(self):
-        # QRコードの画像を保存する
-        if self.qr_image is not None:
+        if self.qr_image is None:
+            return
+
+        try:
             file_path = filedialog.asksaveasfilename(
                 defaultextension=".jpg", filetypes=[("JPEGファイル", "*.jpg")]
             )
             if file_path:
+                # パスの検証
+                if not os.path.abspath(file_path).startswith(os.path.expanduser("~")):
+                    messagebox.showerror("エラー", "不正なファイルパスです")
+                    return
+
                 self.qr_image.convert("RGB").save(file_path, "JPEG")
                 messagebox.showinfo("保存完了", "QRコードが保存されました")
+        except Exception as e:
+            messagebox.showerror("エラー", f"保存中にエラーが発生しました: {str(e)}")
 
     def clear_text(self):
         # テキストフィールドをクリア
@@ -149,17 +195,27 @@ class QRCodeScannerApp:
     def return_to_camera(self):
         # カメラ映像に戻る
         self.show_qr_code = False
-        self.return_to_camera_button.grid_remove()  # 「カメラに戻る」ボタンを非表示
-        self.save_button.grid_remove()  # 「保存」ボタンも非表示
+        self.qr_image = None  # QRコード画像をクリア
+        self.canvas.delete("all")  # キャンバスをクリア
+        self.return_to_camera_button.grid_remove()
+        self.save_button.grid_remove()
+
+    def cleanup(self):
+        # リソースの適切な解放
+        if hasattr(self, "cap"):
+            try:
+                self.cap.release()
+            except:
+                pass
 
     def __del__(self):
-        # ウィンドウを閉じるときにカメラリソースを解放
-        if hasattr(self, "cap") and self.cap.isOpened():
-            self.cap.release()
+        self.cleanup()
 
 
 # アプリケーションのメイン処理
 if __name__ == "__main__":
     root = tk.Tk()
     app = QRCodeScannerApp(root)
+    # ウィンドウが閉じられる時の処理を追加
+    root.protocol("WM_DELETE_WINDOW", lambda: (app.cleanup(), root.destroy()))
     root.mainloop()
