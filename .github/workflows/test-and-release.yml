@@ -1,0 +1,66 @@
+name: Test and Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  test:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.8'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run tests
+      run: |
+        python -m unittest test_qr_scan.py -v
+
+  release:
+    needs: test
+    runs-on: windows-latest
+    if: success()
+    
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+    
+    - name: Get latest tag
+      id: get_latest_tag
+      run: |
+        $latest_tag = $(git describe --tags --abbrev=0 2>$null)
+        if ($?) {
+          $version = $latest_tag -replace '^v'
+          $major, $minor, $patch = $version.Split('.')
+          $new_patch = [int]$patch + 1
+          $new_version = "v$major.$minor.$new_patch"
+        } else {
+          $new_version = "v0.1.0"
+        }
+        echo "NEW_VERSION=$new_version" >> $env:GITHUB_ENV
+      shell: pwsh
+    
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ env.NEW_VERSION }}
+        release_name: Release ${{ env.NEW_VERSION }}
+        body: |
+          Changes in this Release:
+          - Automated release from GitHub Actions
+        draft: false
+        prerelease: false 
